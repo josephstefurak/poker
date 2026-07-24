@@ -346,6 +346,33 @@ test("blind all-in shorter than BB still plays", () => {
   eq(totalChips(g), 2004);
 });
 
+test("raise with a missing/non-numeric amount throws instead of corrupting state", () => {
+  const g = mkGame([1000, 1000, 1000], { btn: 0 });
+  g.startHand();
+  let threw = false;
+  try { g.act({ type: "raise" }); } catch (e) { threw = true; }
+  ok(threw, "must throw on NaN amount");
+  eq(totalChips(g), 3000, "state untouched");
+  ok(Number.isInteger(g.players[0].stack), "stack still an integer");
+});
+
+test("all-in open below the BB does not shrink the minimum raise", () => {
+  const g = mkGame([500, 500, 5], { btn: 0, sb: 2, bb: 4 });
+  g.startHand();               // sb=P1 (2), bb=P2 (4) -> P2 has 1 behind
+  g.act({ type: "call" });     // P0
+  g.act({ type: "call" });     // P1 completes
+  g.act({ type: "check" });    // P2 option
+  g.dealNextStreet();          // flop; order P1, P2, P0
+  g.act({ type: "check" });    // P1
+  eq(g.currentPlayer().id, 2);
+  eq(g.legalActions().maxRaiseTo, 1, "P2 can only shove their last chip");
+  g.act({ type: "raise", amount: 1 });     // sub-BB all-in open
+  eq(g.currentPlayer().id, 0);
+  eq(g.legalActions().minRaiseTo, 5, "min raise over a 1-chip all-in open is 1 + BB");
+  g.act({ type: "raise", amount: 5 });
+  eq(g.legalActions().minRaiseTo, 9, "raise increments stay >= BB afterwards");
+});
+
 test("button rotates to next live player between hands", () => {
   const g = mkGame([1000, 1000, 1000], { btn: 0 });
   g.startHand();
@@ -375,6 +402,9 @@ test("equity estimates are sane", () => {
   ok(trash < 0.45, `72o vs 1: ${trash.toFixed(2)} should be < 0.45`);
   const nuts = E.estimateEquity(C("Ah Kh"), C("Qh Jh Th"), 3, 400, rng);
   ok(nuts > 0.9, `royal flush equity ${nuts.toFixed(2)} should be ~1`);
+  // board plays for everyone: a 4-way chop is worth exactly 1/4
+  const chop = E.estimateEquity(C("2c 3d"), C("As Ks Qs Js Ts"), 3, 300, rng);
+  ok(Math.abs(chop - 0.25) < 0.01, `4-way chop equity ${chop.toFixed(3)} should be 0.25`);
 });
 
 test("200-hand AI-vs-AI simulation: legal actions, conserved chips, no crashes", () => {

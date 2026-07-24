@@ -33,8 +33,8 @@ bet that's large relative to the stack requires near-premium strength.
 
 The AI estimates its **equity** — the probability its hand wins at showdown —
 by simulation: deal random hole cards to every live opponent and random cards to
-complete the board, evaluate everyone, repeat ~160 times (ties counted as half
-a win). This runs in a few milliseconds and naturally understands draws,
+complete the board, evaluate everyone, repeat ~160 times (ties split evenly
+among the tied hands). This runs in a few milliseconds and naturally understands draws,
 blockers, and multiway pressure without any hand-coded heuristics.
 
 The action then falls out of comparing equity to the price:

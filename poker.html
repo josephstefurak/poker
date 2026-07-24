@@ -789,6 +789,7 @@ const PokerEngine = (() => {
       } else if (action.type === "raise") {
         if (!la.canRaise) throw new Error("cannot raise");
         let raiseTo = Math.floor(action.amount);
+        if (!Number.isFinite(raiseTo)) throw new Error("raise amount must be a number");
         raiseTo = Math.max(raiseTo, la.minRaiseTo);
         raiseTo = Math.min(raiseTo, la.maxRaiseTo);
         if (raiseTo <= this.currentBet) throw new Error("raise must exceed current bet");
@@ -798,7 +799,8 @@ const PokerEngine = (() => {
         const isOpen = this.currentBet === 0;
         const fullRaise = raiseTo >= this.currentBet + this.lastRaiseSize || isOpen;
         if (fullRaise) {
-          this.lastRaiseSize = isOpen ? raiseTo : raiseTo - this.currentBet;
+          // floor at one BB so a sub-BB all-in open can't shrink the min raise
+          this.lastRaiseSize = isOpen ? Math.max(raiseTo, this.bigBlind) : raiseTo - this.currentBet;
           for (const q of this.players)
             if (q !== p && !q.out) { q.hasActed = false; q.canRaiseFlag = true; }
         } else {
@@ -1014,14 +1016,14 @@ const PokerEngine = (() => {
       }
       const fullBoard = board.concat(sample.slice(numOpp * 2, numOpp * 2 + need));
       const myScore = evaluate7(hole.concat(fullBoard));
-      let best = -1, tiesWithMe = 1, beaten = false;
+      let best = -1, bestCount = 0;
       for (let o = 0; o < numOpp; o++) {
         const s = evaluate7([sample[o * 2], sample[o * 2 + 1]].concat(fullBoard));
-        if (s > best) best = s;
+        if (s > best) { best = s; bestCount = 1; }
+        else if (s === best) bestCount++;
       }
-      if (best > myScore) beaten = true;
-      else if (best === myScore) tiesWithMe = 2; // approximation: split with one opponent
-      if (!beaten) winShare += 1 / tiesWithMe;
+      if (best < myScore) winShare += 1;
+      else if (best === myScore) winShare += 1 / (1 + bestCount);
     }
     return winShare / iters;
   }
@@ -1069,7 +1071,6 @@ const PokerEngine = (() => {
         if (eff >= th3 + 2 && la.canRaise && rng() < 0.7 * per.aggr) return { type: "raise", amount: raiseAmount(1.0) };
         if (eff >= th3) return { type: "call" };
         if (!bigBet && eff >= callTh + 2.0 && potOdds < 0.25) return { type: "call" };
-        if (la.canCheck) return { type: "check" };
         return { type: "fold" };
       }
       if (eff >= openTh && la.canRaise && rng() < 0.55 + 0.35 * per.aggr)
@@ -1204,12 +1205,14 @@ if (typeof module !== "undefined" && module.exports) module.exports = PokerEngin
     return d;
   }
   const fmt = n => n.toLocaleString("en-US");
+  let bannerTimer = null;
   function banner(text, holdMs) {
+    if (bannerTimer) { clearTimeout(bannerTimer); bannerTimer = null; }
     bannerEl.textContent = text;
     bannerEl.classList.add("show");
     if (holdMs) {
       const my = seq;
-      setTimeout(() => { if (my === seq) bannerEl.classList.remove("show"); }, holdMs * speedMult());
+      bannerTimer = setTimeout(() => { if (my === seq) bannerEl.classList.remove("show"); }, holdMs * speedMult());
     }
   }
   function drainLog() {
@@ -1280,7 +1283,7 @@ if (typeof module !== "undefined" && module.exports) module.exports = PokerEngin
       const st = seat.querySelector(".status");
       st.textContent = p.out ? "busted" :
         p.folded ? "folded" :
-        p.allIn ? "all-in" :
+        p.allIn && game.state !== "hand-complete" ? "all-in" :
         i === game.sbIndex && game.street === "preflop" && p.streetBet <= game.smallBlind && game.currentBet === game.bigBlind ? "small blind" :
         i === game.bbIndex && game.street === "preflop" && game.currentBet === game.bigBlind ? "big blind" : "";
       const chip = seat.querySelector(".betchip");
@@ -1308,6 +1311,7 @@ if (typeof module !== "undefined" && module.exports) module.exports = PokerEngin
     // pot
     const pot = game.pot();
     potlineEl.innerHTML = pot > 0 ? `Pot: <b>${fmt(pot)}</b>` : "";
+    if (game.state !== "hand-complete") sidepotsEl.textContent = "";
     positionDealerButton();
     // hero cards in the action bar
     heroHandEl.innerHTML = "";
@@ -1344,7 +1348,7 @@ if (typeof module !== "undefined" && module.exports) module.exports = PokerEngin
       btnRaise.style.display = "";
       raiseRow.style.display = "flex";
       slider.min = la.minRaiseTo; slider.max = la.maxRaiseTo;
-      slider.step = Math.max(1, SMALL_BLIND);
+      slider.step = 1;   // snapping happens in syncRaise, so all-in stays reachable
       slider.value = la.minRaiseTo;
       syncRaise(la.minRaiseTo);
     } else {
@@ -1352,16 +1356,20 @@ if (typeof module !== "undefined" && module.exports) module.exports = PokerEngin
       raiseRow.style.display = "none";
     }
   }
-  function syncRaise(v) {
+  let raiseTarget = 0;   // single source of truth for the amount btnRaise submits
+  function syncRaise(v, snap) {
     const la = game.legalActions();
     if (!la || !la.canRaise) return;
-    v = Math.max(la.minRaiseTo, Math.min(la.maxRaiseTo, Math.round(Number(v) || la.minRaiseTo)));
+    v = Math.round(Number(v) || la.minRaiseTo);
+    if (snap) v = Math.round(v / SMALL_BLIND) * SMALL_BLIND;  // drag moves in blind-size steps
+    v = Math.max(la.minRaiseTo, Math.min(la.maxRaiseTo, v));
+    raiseTarget = v;
     slider.value = v; raiseAmt.value = v;
     const open = game.currentBet === 0;
     btnRaise.textContent = v >= la.maxRaiseTo ? `All-in ${fmt(v)}` :
       open ? `Bet ${fmt(v)}` : `Raise to ${fmt(v)}`;
   }
-  slider.addEventListener("input", () => syncRaise(slider.value));
+  slider.addEventListener("input", () => syncRaise(slider.value, true));
   raiseAmt.addEventListener("change", () => syncRaise(raiseAmt.value));
   $("raiserow").addEventListener("click", e => {
     const p = e.target.dataset && e.target.dataset.p;
@@ -1389,7 +1397,7 @@ if (typeof module !== "undefined" && module.exports) module.exports = PokerEngin
     const la = game && game.legalActions();
     if (la) humanAct({ type: la.canCheck ? "check" : "call" });
   });
-  btnRaise.addEventListener("click", () => humanAct({ type: "raise", amount: Number(slider.value) }));
+  btnRaise.addEventListener("click", () => humanAct({ type: "raise", amount: raiseTarget }));
 
   /* ---------------- game loop ---------------- */
   async function pump() {
@@ -1451,6 +1459,9 @@ if (typeof module !== "undefined" && module.exports) module.exports = PokerEngin
 
     hideActions("");
     render({ winCards });
+    if (res.pots.length > 1)
+      sidepotsEl.textContent = res.pots
+        .map((p, i) => `${i === 0 ? "Main" : "Side " + i}: ${fmt(p.amount)}`).join("  ·  ");
     banner(msgs.join("  ·  "), 3400);
     if (await wait(res.showdown ? 3600 : 2200) === "stale") return;
     heroWonIds = new Set();
@@ -1460,9 +1471,9 @@ if (typeof module !== "undefined" && module.exports) module.exports = PokerEngin
     // table conquered?
     if (!game.canContinue()) {
       banner("🏆 You cleaned out the table!", 4000);
-      save.stats.tablesWon++;
+      save.stats.tablesWon++; persist();
+      if (await wait(2800) === "stale") return;   // let the banner actually show
       endSession();
-      if (await wait(2500) === "stale") return;
       showSetup();
       return;
     }
@@ -1474,7 +1485,9 @@ if (typeof module !== "undefined" && module.exports) module.exports = PokerEngin
   }
 
   function showBustDialog() {
-    const canRebuy = bank >= BUY_IN && game.canContinue();
+    // canContinue() is false here just because the hero is out; a re-buy is
+    // fine as long as anyone is left at the table holding chips
+    const canRebuy = bank >= BUY_IN && game.dealtIn().length >= 1;
     $("bustTitle").textContent = "You're felted!";
     $("bustText").textContent = canRebuy
       ? `You're out of chips. Re-buy for ${fmt(BUY_IN)} from your bankroll (${fmt(bank)})?`
@@ -1485,7 +1498,10 @@ if (typeof module !== "undefined" && module.exports) module.exports = PokerEngin
     $("bustOverlay").classList.remove("hidden");
   }
   $("bustRebuy").addEventListener("click", () => {
+    if (!game || !game.players[HERO].out) return;   // stale dialog (session already ended)
     $("bustOverlay").classList.add("hidden");
+    leaveRequested = false;
+    $("btnLeave").textContent = "Leave table";
     bank -= BUY_IN;
     const hero = game.players[HERO];
     hero.stack = BUY_IN; hero.out = false;
@@ -1509,6 +1525,7 @@ if (typeof module !== "undefined" && module.exports) module.exports = PokerEngin
     game = null;
     leaveRequested = false;
     $("btnLeave").textContent = "Leave table";
+    $("bustOverlay").classList.add("hidden");
     dealerBtnEl.style.display = "none";
     seatsEl.innerHTML = ""; boardEl.innerHTML = ""; heroHandEl.innerHTML = "";
     potlineEl.innerHTML = ""; sidepotsEl.innerHTML = "";
@@ -1622,6 +1639,7 @@ if (typeof module !== "undefined" && module.exports) module.exports = PokerEngin
   /* log drawer + leave */
   $("btnLog").addEventListener("click", () => $("logdrawer").classList.toggle("open"));
   $("btnLeave").addEventListener("click", () => {
+    if (!$("bustOverlay").classList.contains("hidden")) return;  // decide in the dialog first
     if (!game) { showSetup(); return; }
     if (game.state === "hand-complete" || game.state === "idle") {
       endSession(); showSetup(); return;
