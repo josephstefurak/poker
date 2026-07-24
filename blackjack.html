@@ -1,0 +1,1584 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Blackjack Night — Local Blackjack vs the Dealer</title>
+<style>
+  /* ============================================================
+     Blackjack Night — single-file blackjack game
+     Same design language as poker.html (Hold'em Night)
+     ============================================================ */
+  :root {
+    --felt-1: #1d6b45;
+    --felt-2: #0e4a2d;
+    --rail: #4a2c17;
+    --rail-hi: #6b3f21;
+    --bg-1: #14181f;
+    --bg-2: #090b0f;
+    --gold: #e8c268;
+    --gold-dim: #a8894a;
+    --card-red: #c62f2f;
+    --card-black: #1c2026;
+    --text: #e8e6e0;
+    --text-dim: #9aa3ad;
+    --accent: #4da3ff;
+    --danger: #e05252;
+    --ok: #46c46e;
+    --seat-bg: rgba(10, 14, 18, 0.88);
+    --panel: #171c24;
+    --panel-edge: #2a3340;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+    background: radial-gradient(ellipse at 50% 30%, var(--bg-1), var(--bg-2) 75%);
+    color: var(--text);
+    overflow: hidden;
+    user-select: none;
+  }
+
+  /* ---------- top bar ---------- */
+  #topbar {
+    position: fixed; top: 0; left: 0; right: 0; height: 46px;
+    display: flex; align-items: center; gap: 18px;
+    padding: 0 16px;
+    background: linear-gradient(#10141b, #0c0f14);
+    border-bottom: 1px solid #232b36;
+    z-index: 40;
+    font-size: 14px;
+  }
+  #topbar .brand { font-weight: 700; letter-spacing: 0.5px; color: var(--gold); font-size: 15px; }
+  #topbar .brand span { color: var(--text-dim); font-weight: 400; }
+  #topbar .stat { color: var(--text-dim); }
+  #topbar .stat b { color: var(--text); font-weight: 600; }
+  #topbar .spacer { flex: 1; }
+  .tbtn {
+    background: #1d242e; color: var(--text);
+    border: 1px solid #2c3644; border-radius: 6px;
+    padding: 6px 12px; font-size: 13px; cursor: pointer;
+  }
+  .tbtn:hover { background: #26303c; border-color: #3a4756; }
+  .tbtn.warn { color: #f0b3b3; }
+
+  /* ---------- table ---------- */
+  #stage { position: absolute; top: 46px; left: 0; right: 0; bottom: 128px; }
+  #table {
+    position: absolute; left: 50%; top: 50%;
+    width: min(94%, 1120px); height: min(92%, 600px);
+    transform: translate(-50%, -50%);
+    border-radius: 46% 46% 50% 50% / 70% 70% 36% 36%;
+    background: radial-gradient(ellipse at 50% 20%, var(--felt-1), var(--felt-2) 80%);
+    box-shadow:
+      0 0 0 14px var(--rail),
+      0 0 0 16px var(--rail-hi),
+      0 24px 60px rgba(0,0,0,0.6),
+      inset 0 0 80px rgba(0,0,0,0.35);
+  }
+  #table::before {
+    content: "BLACKJACK PAYS 3 TO 2  ·  DEALER STANDS ON ALL 17s";
+    position: absolute; left: 50%; top: 46%;
+    transform: translateX(-50%);
+    font-size: 13px; letter-spacing: 0.25em; white-space: nowrap;
+    color: rgba(255, 235, 190, 0.4);
+    pointer-events: none;
+  }
+
+  /* dealer area */
+  #dealerArea {
+    position: absolute; left: 50%; top: 7%;
+    transform: translateX(-50%);
+    display: flex; flex-direction: column; align-items: center; gap: 7px;
+    z-index: 5;
+  }
+  #dealerLabel { font-size: 12px; color: var(--text-dim); letter-spacing: 0.12em; text-transform: uppercase; }
+  #dealerCards { display: flex; gap: 6px; min-height: 86px; }
+  #dealerTotal {
+    min-height: 22px; font-size: 14px; font-weight: 600; color: #f4eeda;
+    background: rgba(8,10,14,0.6); border-radius: 10px; padding: 1px 12px;
+  }
+  #dealerTotal:empty { background: none; }
+  #shoeInfo {
+    position: absolute; right: 4%; top: 7%;
+    font-size: 11.5px; color: var(--text-dim); text-align: right; line-height: 1.5;
+  }
+
+  /* seats (AI + human spots share styling) */
+  .seat {
+    position: absolute; width: 150px;
+    transform: translate(-50%, -50%);
+    display: flex; flex-direction: column; align-items: center; gap: 4px;
+    z-index: 5;
+  }
+  .seat .hands { display: flex; gap: 10px; align-items: flex-end; min-height: 62px; }
+  .handbox { display: flex; flex-direction: column; align-items: center; gap: 3px; position: relative; }
+  .handbox .cards { display: flex; min-height: 58px; }
+  .handbox .cards .card { margin-left: -13px; }
+  .handbox .cards .card:first-child { margin-left: 0; }
+  .handbox .hv {
+    font-size: 11px; font-weight: 600; color: #dfe5ea;
+    background: rgba(8,10,14,0.7); border-radius: 8px; padding: 0 8px; min-height: 15px;
+  }
+  .handbox .hv:empty { background: none; }
+  .handbox.active::after {
+    content: "▼"; position: absolute; top: -20px; left: 50%;
+    transform: translateX(-50%); color: var(--accent); font-size: 12px;
+    animation: bob 0.9s ease-in-out infinite;
+  }
+  @keyframes bob { 0%,100% { transform: translateX(-50%) translateY(0); } 50% { transform: translateX(-50%) translateY(-3px); } }
+  .badge {
+    position: absolute; top: -10px; left: 50%; transform: translateX(-50%) rotate(-6deg);
+    font-size: 11px; font-weight: 800; letter-spacing: 0.06em;
+    padding: 2px 9px; border-radius: 6px; z-index: 8; white-space: nowrap;
+    box-shadow: 0 3px 10px rgba(0,0,0,0.5);
+  }
+  .badge.win  { background: #1f6e41; color: #dff5e6; border: 1px solid #35a465; }
+  .badge.lose { background: #6e1f2a; color: #f5dfe2; border: 1px solid #a43548; }
+  .badge.push { background: #4a4f57; color: #e8e6e0; border: 1px solid #6a7078; }
+  .badge.bj   { background: #8a6d1f; color: #fff3d0; border: 1px solid #c8a545; }
+  .seat .plate {
+    background: var(--seat-bg);
+    border: 1px solid #2a3340;
+    border-radius: 10px;
+    padding: 5px 10px; width: 100%;
+    text-align: center; position: relative;
+    box-shadow: 0 4px 14px rgba(0,0,0,0.45);
+  }
+  .seat .plate .nm { font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .seat .plate .stk { font-size: 12.5px; color: var(--gold); }
+  .seat .plate .status { font-size: 10.5px; color: var(--text-dim); min-height: 13px; text-transform: uppercase; letter-spacing: 0.06em; }
+  .seat .avatar {
+    position: absolute; left: -14px; top: -14px;
+    width: 30px; height: 30px; border-radius: 50%;
+    background: #222a34; border: 1px solid #384452;
+    display: flex; align-items: center; justify-content: center; font-size: 16px;
+  }
+  .seat.acting .plate {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px rgba(77,163,255,0.35), 0 0 18px rgba(77,163,255,0.35);
+  }
+  .seat.gone { opacity: 0.3; }
+  .bet-pill {
+    font-size: 11.5px; font-weight: 600; color: #fff;
+    background: rgba(12,16,22,0.85); border: 1px solid #3a4756;
+    border-radius: 10px; padding: 1px 8px 1px 5px; white-space: nowrap;
+  }
+  .bet-pill::before { content: "●"; color: var(--danger); margin-right: 4px; font-size: 9px; }
+  .bet-pill:empty { display: none; }
+
+  /* human spots row */
+  #spots {
+    position: absolute; left: 50%; bottom: 4%;
+    transform: translateX(-50%);
+    display: flex; gap: 34px; align-items: flex-end; z-index: 6;
+  }
+  .spot { display: flex; flex-direction: column; align-items: center; gap: 6px; min-width: 120px; }
+  .spot .hands { display: flex; gap: 12px; align-items: flex-end; min-height: 88px; }
+  .spot .handbox .cards { min-height: 84px; }
+  .spot .handbox .cards .card { margin-left: -18px; }
+  .spot .handbox .cards .card:first-child { margin-left: 0; }
+  .spot .ring {
+    width: 74px; height: 46px; border: 2px dashed rgba(255,235,190,0.35);
+    border-radius: 50%; display: flex; align-items: center; justify-content: center;
+    font-size: 12px; color: rgba(255,235,190,0.5); cursor: pointer;
+  }
+  .spot .ring.on { border-color: var(--gold); color: var(--gold); border-style: solid; }
+  .spot .ring:hover { border-color: var(--gold); }
+  .spot .betline { min-height: 18px; }
+
+  #banner {
+    position: absolute; left: 50%; top: 56%;
+    transform: translateX(-50%);
+    background: rgba(8, 10, 14, 0.85);
+    border: 1px solid var(--gold-dim);
+    color: var(--gold);
+    border-radius: 8px; padding: 8px 22px;
+    font-size: 16px; font-weight: 600; white-space: nowrap;
+    opacity: 0; transition: opacity 0.25s;
+    pointer-events: none; z-index: 20;
+    max-width: 92%; overflow: hidden; text-overflow: ellipsis;
+  }
+  #banner.show { opacity: 1; }
+
+  /* ---------- cards ---------- */
+  .card {
+    width: 56px; height: 80px;
+    background: linear-gradient(160deg, #fdfdfa, #ece9df);
+    border-radius: 6px;
+    border: 1px solid #b9b5a6;
+    box-shadow: 0 3px 8px rgba(0,0,0,0.4);
+    position: relative;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    font-weight: 700;
+    flex-shrink: 0;
+  }
+  .card .r { font-size: 22px; line-height: 1; }
+  .card .s { font-size: 18px; line-height: 1.1; }
+  .card.red { color: var(--card-red); }
+  .card.black { color: var(--card-black); }
+  .card.small { width: 40px; height: 58px; border-radius: 5px; }
+  .card.small .r { font-size: 15px; }
+  .card.small .s { font-size: 13px; }
+  .card.back {
+    background: repeating-linear-gradient(45deg, #7e2c31 0 6px, #93383e 6px 12px);
+    border-color: #5d2023;
+  }
+  .card.back::after {
+    content: ""; position: absolute; inset: 5px;
+    border: 1.5px solid rgba(255,255,255,0.35); border-radius: 4px;
+  }
+  .card.deal { animation: dealin 0.28s ease-out; }
+  @keyframes dealin {
+    from { transform: translateY(-14px) scale(0.85); opacity: 0; }
+    to   { transform: none; opacity: 1; }
+  }
+
+  /* ---------- bottom bar: betting + actions ---------- */
+  #actionbar {
+    position: fixed; left: 0; right: 0; bottom: 0; height: 128px;
+    background: linear-gradient(#12161d, #0b0e12);
+    border-top: 1px solid #232b36;
+    display: flex; align-items: center; justify-content: center; gap: 26px;
+    padding: 0 18px; z-index: 40;
+  }
+  #betPanel { display: flex; align-items: center; gap: 22px; }
+  .betspot { display: flex; flex-direction: column; align-items: center; gap: 6px; }
+  .betspot .label { font-size: 11px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.08em; }
+  .betspot .amount {
+    font-size: 17px; font-weight: 700; color: var(--gold); min-width: 84px; text-align: center;
+    background: #10141b; border: 1px solid #2c3644; border-radius: 7px; padding: 5px 8px;
+  }
+  .betspot.inactive .amount { color: #58606b; }
+  .betspot .chips { display: flex; gap: 5px; }
+  .chipbtn {
+    width: 34px; height: 34px; border-radius: 50%;
+    border: 2px dashed rgba(255,255,255,0.55);
+    font-size: 11px; font-weight: 700; color: #fff; cursor: pointer;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.45);
+  }
+  .chipbtn:hover { filter: brightness(1.2); }
+  .chipbtn.c10  { background: #2f66a8; }
+  .chipbtn.c50  { background: #1f6e41; }
+  .chipbtn.c100 { background: #222; border-color: #999; }
+  .chipbtn.c500 { background: #7a2f8a; }
+  .chipbtn.clear { background: #5a2430; font-size: 12px; border-style: solid; }
+  #betSide { display: flex; flex-direction: column; gap: 8px; }
+  .bigact {
+    padding: 12px 26px; font-size: 15px; font-weight: 700;
+    border-radius: 8px; border: 1px solid transparent; cursor: pointer; color: #fff;
+  }
+  .bigact:disabled { opacity: 0.35; cursor: default; }
+  .bigact.deal { background: linear-gradient(#2b8a54, #1f6e41); border-color: #35a465; }
+  .bigact.deal:hover:not(:disabled) { filter: brightness(1.12); }
+  .bigact.rebet { background: #1f3f66; border-color: #2e5c94; }
+  .bigact.rebet:hover:not(:disabled) { filter: brightness(1.2); }
+
+  #playPanel { display: none; align-items: center; gap: 10px; }
+  .abtn {
+    padding: 13px 24px; font-size: 15px; font-weight: 700;
+    border-radius: 8px; border: 1px solid transparent;
+    cursor: pointer; color: #fff; letter-spacing: 0.02em;
+  }
+  .abtn:active { transform: translateY(1px); }
+  .abtn:disabled { opacity: 0.35; cursor: default; }
+  .abtn.hit    { background: #1f4f33; border-color: #2e7048; }
+  .abtn.stand  { background: #5a2430; border-color: #7c3242; }
+  .abtn.double { background: #1f3f66; border-color: #2e5c94; }
+  .abtn.split  { background: #6b4a1f; border-color: #93672e; }
+  .abtn:hover:not(:disabled) { filter: brightness(1.25); }
+  #insPanel { display: none; align-items: center; gap: 12px; }
+  #insPanel .q { font-size: 15px; color: var(--text); }
+  #waitmsg { color: var(--text-dim); font-size: 14px; text-align: center; }
+
+  /* ---------- log drawer ---------- */
+  #logdrawer {
+    position: fixed; top: 46px; right: 0; bottom: 128px; width: 290px;
+    background: rgba(13, 17, 23, 0.96);
+    border-left: 1px solid #232b36;
+    transform: translateX(100%); transition: transform 0.25s;
+    z-index: 30; display: flex; flex-direction: column;
+  }
+  #logdrawer.open { transform: none; }
+  #logdrawer h3 {
+    padding: 10px 14px; font-size: 13px; color: var(--text-dim);
+    border-bottom: 1px solid #232b36; font-weight: 600;
+    text-transform: uppercase; letter-spacing: 0.08em;
+  }
+  #logbody { flex: 1; overflow-y: auto; padding: 10px 14px; font-size: 12.5px; line-height: 1.55; color: #c7cdd4; }
+  #logbody .h { color: var(--gold); font-weight: 600; margin-top: 8px; }
+  #logbody .w { color: var(--ok); }
+  #logbody div { word-wrap: break-word; }
+
+  /* ---------- overlays ---------- */
+  .overlay {
+    position: fixed; inset: 0; z-index: 60;
+    background: rgba(5, 7, 10, 0.82);
+    display: flex; align-items: center; justify-content: center;
+  }
+  .overlay.hidden { display: none; }
+  .modal {
+    background: var(--panel);
+    border: 1px solid var(--panel-edge);
+    border-radius: 14px;
+    padding: 30px 34px;
+    width: min(92vw, 460px);
+    box-shadow: 0 24px 80px rgba(0,0,0,0.7);
+  }
+  .modal h1 { font-size: 24px; color: var(--gold); margin-bottom: 4px; }
+  .modal h2 { font-size: 18px; color: var(--gold); margin-bottom: 10px; }
+  .modal .sub { color: var(--text-dim); font-size: 13.5px; margin-bottom: 22px; }
+  .modal label {
+    display: block; font-size: 12px; color: var(--text-dim);
+    text-transform: uppercase; letter-spacing: 0.07em; margin: 16px 0 6px;
+  }
+  .modal input[type=text] {
+    width: 100%; padding: 9px 12px; font-size: 15px;
+    background: #10141b; color: var(--text);
+    border: 1px solid #2c3644; border-radius: 7px;
+  }
+  .opprow { display: flex; gap: 7px; }
+  .oppbtn {
+    flex: 1; padding: 10px 0; font-size: 15px; font-weight: 600;
+    background: #10141b; color: var(--text-dim);
+    border: 1px solid #2c3644; border-radius: 7px; cursor: pointer;
+  }
+  .oppbtn.sel { background: #1f3f66; color: #fff; border-color: #3a6cae; }
+  .modal .bigbtn {
+    width: 100%; margin-top: 26px; padding: 13px;
+    font-size: 16px; font-weight: 700;
+    background: linear-gradient(#2b8a54, #1f6e41); color: #fff;
+    border: 1px solid #35a465; border-radius: 8px; cursor: pointer;
+  }
+  .modal .bigbtn:hover { filter: brightness(1.12); }
+  .modal .bigbtn:disabled { filter: grayscale(0.7); opacity: 0.5; cursor: default; }
+  .modal .bigbtn.blue { background: linear-gradient(#2f66a8, #24507f); border-color: #3a7cc4; }
+  .modal .minor { color: var(--text-dim); font-size: 12.5px; margin-top: 14px; text-align: center; }
+  .modal .minor button {
+    background: none; border: none; color: var(--accent);
+    cursor: pointer; font-size: 12.5px; text-decoration: underline;
+  }
+  .bankline { margin-top: 18px; font-size: 14px; color: var(--text-dim); }
+  .bankline b { color: var(--gold); }
+  .statgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 18px; margin-top: 14px; font-size: 13.5px; }
+  .statgrid span { color: var(--text-dim); }
+  .statgrid b { text-align: right; font-weight: 600; }
+  .speedrow { display: flex; gap: 7px; }
+
+  @media (max-width: 900px) {
+    .seat { width: 120px; }
+    #spots { gap: 16px; }
+    #betPanel { gap: 10px; }
+    #logdrawer { width: 240px; }
+  }
+</style>
+</head>
+<body>
+
+<div id="topbar">
+  <div class="brand">♣ Blackjack Night <span>— Vegas rules vs the dealer</span></div>
+  <div class="stat">Bets <b>10–500</b></div>
+  <div class="stat">Round <b id="tbRound">–</b></div>
+  <div class="stat">Bankroll <b id="tbBank">–</b></div>
+  <div class="spacer"></div>
+  <button class="tbtn" id="btnLog">History</button>
+  <button class="tbtn" id="btnSettings">Settings</button>
+  <button class="tbtn warn" id="btnLeave">Leave table</button>
+</div>
+
+<div id="stage">
+  <div id="table">
+    <div id="dealerArea">
+      <div id="dealerLabel">Dealer</div>
+      <div id="dealerCards"></div>
+      <div id="dealerTotal"></div>
+    </div>
+    <div id="shoeInfo"></div>
+    <div id="aiseats"></div>
+    <div id="spots"></div>
+    <div id="banner"></div>
+  </div>
+</div>
+
+<div id="actionbar">
+  <div id="betPanel"></div>
+  <div id="playPanel">
+    <button class="abtn hit" id="btnHit">Hit</button>
+    <button class="abtn stand" id="btnStand">Stand</button>
+    <button class="abtn double" id="btnDouble">Double</button>
+    <button class="abtn split" id="btnSplit">Split</button>
+  </div>
+  <div id="insPanel">
+    <span class="q">Dealer shows an Ace — insurance? (costs half your bet, pays 2:1 on dealer blackjack)</span>
+    <button class="abtn double" id="btnInsYes">Insure</button>
+    <button class="abtn stand" id="btnInsNo">No thanks</button>
+  </div>
+  <div id="waitmsg">Welcome to the table.</div>
+</div>
+
+<div id="logdrawer">
+  <h3>Round history</h3>
+  <div id="logbody"></div>
+</div>
+
+<div class="overlay hidden" id="setupOverlay">
+  <div class="modal">
+    <h1>♣ Blackjack Night</h1>
+    <div class="sub">Vegas-rules blackjack: 6-deck shoe, dealer stands on all 17s, blackjack pays 3:2, double after split. Fake money only.</div>
+    <label>Your name</label>
+    <input type="text" id="setupName" maxlength="14" placeholder="You">
+    <label>AI table-mates</label>
+    <div class="opprow" id="setupOpps"></div>
+    <div class="bankline">Bankroll: <b id="setupBank"></b> &nbsp;·&nbsp; Bets: <b>10–500</b> per spot &nbsp;·&nbsp; Spots: <b>up to 3</b></div>
+    <button class="bigbtn" id="setupGo">Take a seat</button>
+    <div class="minor" id="setupBroke" style="display:none">
+      Bankroll too low to play. <button id="setupReset">Reset bankroll</button>
+    </div>
+  </div>
+</div>
+
+<div class="overlay hidden" id="settingsOverlay">
+  <div class="modal">
+    <h2>Settings &amp; stats</h2>
+    <label>Game speed</label>
+    <div class="speedrow" id="speedRow">
+      <button class="oppbtn" data-s="relaxed">Relaxed</button>
+      <button class="oppbtn" data-s="normal">Normal</button>
+      <button class="oppbtn" data-s="fast">Fast</button>
+    </div>
+    <div class="statgrid" id="statGrid"></div>
+    <button class="bigbtn blue" id="settingsClose">Back to the game</button>
+    <div class="minor"><button id="settingsResetBank">Reset bankroll &amp; stats</button></div>
+  </div>
+</div>
+
+<script id="engine">
+/* ============================================================
+   ENGINE — pure blackjack logic, no DOM access.
+   Extracted and tested headlessly by tests/blackjack-tests.mjs.
+   Rules: 6-deck shoe, dealer stands on all 17s (S17), blackjack
+   pays 3:2, double on any two cards, double after split, split
+   up to 3 hands, split aces receive one card, no surrender.
+   ============================================================ */
+"use strict";
+const BlackjackEngine = (() => {
+
+  /* ---------------- RNG (seedable) ---------------- */
+  function mulberry32(seed) {
+    let a = seed >>> 0;
+    return function () {
+      a |= 0; a = (a + 0x6D2B79F5) | 0;
+      let t = Math.imul(a ^ (a >>> 15), 1 | a);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+
+  /* ---------------- cards ----------------
+     card int 0..51: rank = 2 + (c % 13) (11=J 12=Q 13=K 14=A), suit = c/13 */
+  const RANKS = "23456789TJQKA";
+  const SUIT_GLYPHS = ["♠", "♥", "♦", "♣"];
+  const rankOf = c => 2 + (c % 13);
+  const suitOf = c => Math.floor(c / 13);
+  const cardStr = c => RANKS[c % 13] + "shdc"[suitOf(c)];
+  const cardFromStr = s => {
+    const r = RANKS.indexOf(s[0].toUpperCase());
+    const su = "shdc".indexOf(s[1].toLowerCase());
+    if (r < 0 || su < 0) throw new Error("bad card: " + s);
+    return su * 13 + r;
+  };
+  const cardsFromStr = str => str.trim().split(/\s+/).map(cardFromStr);
+
+  /* blackjack value of a single card (ace = 11 here; hand math demotes) */
+  const cardValue = c => {
+    const r = rankOf(c);
+    return r >= 10 && r <= 13 ? 10 : r === 14 ? 11 : r;
+  };
+  /* Hi-Lo count tag */
+  const hiLo = c => {
+    const v = cardValue(c);
+    return v >= 2 && v <= 6 ? 1 : v >= 10 ? -1 : 0;
+  };
+
+  /* ---------------- hand math ---------------- */
+  function handValue(cards) {
+    // returns { total, soft } — best total <= 21 when possible
+    let total = 0, aces = 0;
+    for (const c of cards) {
+      const v = cardValue(c);
+      total += v;
+      if (v === 11) aces++;
+    }
+    while (total > 21 && aces > 0) { total -= 10; aces--; }
+    return { total, soft: aces > 0 };
+  }
+  const isBust = cards => handValue(cards).total > 21;
+  const isBlackjack = cards => cards.length === 2 && handValue(cards).total === 21;
+
+  function handText(cards) {
+    const { total, soft } = handValue(cards);
+    if (total > 21) return `${total} — bust`;
+    if (isBlackjack(cards)) return "Blackjack!";
+    return soft ? `soft ${total}` : String(total);
+  }
+
+  /* ---------------- shoe ---------------- */
+  const DECKS = 6;
+  const SHOE_SIZE = 52 * DECKS;
+  function newShoe(rng) {
+    const cards = [];
+    for (let d = 0; d < DECKS; d++)
+      for (let c = 0; c < 52; c++) cards.push(c);
+    for (let i = cards.length - 1; i > 0; i--) {
+      const j = Math.floor(rng() * (i + 1));
+      [cards[i], cards[j]] = [cards[j], cards[i]];
+    }
+    return cards;
+  }
+
+  /* ---------------- basic strategy (6D, S17, DAS) ----------------
+     Returns 'hit' | 'stand' | 'double' | 'split' with legal fallbacks. */
+  function basicStrategy(cards, dealerUpCard, opts) {
+    const canDouble = !!(opts && opts.canDouble);
+    const canSplit = !!(opts && opts.canSplit);
+    const up = cardValue(dealerUpCard);          // 2..11
+    const { total, soft } = handValue(cards);
+
+    if (canSplit && cards.length === 2 && cardValue(cards[0]) === cardValue(cards[1])) {
+      const v = cardValue(cards[0]);
+      const split =
+        v === 11 ? true :                        // AA
+        v === 10 ? false :                       // TT
+        v === 9 ? (up >= 2 && up <= 9 && up !== 7) :
+        v === 8 ? true :
+        v === 7 ? up <= 7 :
+        v === 6 ? up <= 6 :
+        v === 5 ? false :                        // play as hard 10
+        v === 4 ? (up === 5 || up === 6) :       // DAS
+        /* 2,3 */ up <= 7;
+      if (split) return "split";
+    }
+
+    if (soft) {
+      if (total >= 19) return "stand";
+      if (total === 18) {                        // A7
+        if (up >= 3 && up <= 6) return canDouble ? "double" : "stand";
+        if (up === 2 || up === 7 || up === 8) return "stand";
+        return "hit";                            // vs 9, 10, A
+      }
+      if (total === 17) return (up >= 3 && up <= 6 && canDouble) ? "double" : "hit";
+      if (total >= 15) return (up >= 4 && up <= 6 && canDouble) ? "double" : "hit"; // A4/A5
+      return (up >= 5 && up <= 6 && canDouble) ? "double" : "hit";                  // A2/A3
+    }
+
+    if (total >= 17) return "stand";
+    if (total >= 13) return up <= 6 ? "stand" : "hit";
+    if (total === 12) return (up >= 4 && up <= 6) ? "stand" : "hit";
+    if (total === 11) return (up <= 10 && canDouble) ? "double" : "hit"; // hit vs A (S17)
+    if (total === 10) return (up <= 9 && canDouble) ? "double" : "hit";
+    if (total === 9) return (up >= 3 && up <= 6 && canDouble) ? "double" : "hit";
+    return "hit";
+  }
+
+  /* ---------------- personalities ----------------
+     mistakes: chance of a characteristic error per decision
+     insure:   base chance of taking insurance (Shark uses the count)
+     counter:  bets & deviates by Hi-Lo true count                    */
+  const PERSONALITIES = [
+    { key: "prof",    label: "Professor", emoji: "🎓", mistakes: 0,    insure: 0,    counter: false, betStyle: "flat" },
+    { key: "shark",   label: "Shark",     emoji: "🦈", mistakes: 0,    insure: 0,    counter: true,  betStyle: "count" },
+    { key: "tourist", label: "Tourist",   emoji: "🧢", mistakes: 0.18, insure: 0.35, counter: false, betStyle: "flat" },
+    { key: "rock",    label: "The Rock",  emoji: "🪨", mistakes: 0,    insure: 0,    counter: false, betStyle: "min", noDoubleSplit: true },
+    { key: "gambler", label: "Gambler",   emoji: "🎲", mistakes: 0.08, insure: 0.5,  counter: false, betStyle: "martingale" },
+  ];
+  const AI_NAMES = ["Vera", "Moss", "Dmitri", "Lola", "Ace", "Kim", "Sable", "Rico", "June", "Otto"];
+
+  /* AI playing decision for one hand */
+  function aiDecide(personality, cards, dealerUp, opts, rng, trueCount) {
+    const per = personality;
+    const legal = { canDouble: opts.canDouble && !per.noDoubleSplit, canSplit: opts.canSplit && !per.noDoubleSplit };
+    let action = basicStrategy(cards, dealerUp, legal);
+
+    if (per.counter) {
+      // famous index plays (Illustrious 18 subset)
+      const { total, soft } = handValue(cards);
+      const up = cardValue(dealerUp);
+      if (!soft && cards.length >= 2) {
+        if (total === 16 && up === 10 && trueCount >= 0) action = "stand";
+        else if (total === 15 && up === 10 && trueCount >= 4) action = "stand";
+        else if (total === 12 && up === 3 && trueCount >= 2) action = "stand";
+        else if (total === 12 && up === 2 && trueCount >= 3) action = "stand";
+        else if (total === 10 && up === 11 && trueCount >= 4 && legal.canDouble) action = "double";
+        else if (total === 11 && up === 11 && trueCount >= 1 && legal.canDouble) action = "double";
+      }
+    }
+
+    if (per.mistakes > 0 && rng() < per.mistakes) {
+      // characteristic amateur errors
+      const { total, soft } = handValue(cards);
+      const up = cardValue(dealerUp);
+      if (!soft && total >= 12 && total <= 16 && up >= 7) action = "stand";      // afraid to bust
+      else if (soft && total === 18) action = "stand";                            // "18 is good!"
+      else if (total === 11 && legal.canDouble) action = "hit";                   // too timid to double
+      else if (action === "split") action = "hit";                                // won't split
+      else if (total <= 11) action = "hit";
+    }
+    // safety: never emit an illegal action
+    if (action === "double" && !opts.canDouble) action = handValue(cards).total >= 17 ? "stand" : "hit";
+    if (action === "split" && !opts.canSplit) action = basicStrategy(cards, dealerUp, { canDouble: opts.canDouble, canSplit: false });
+    if (action === "double" && !opts.canDouble) action = "hit";
+    return action;
+  }
+
+  /* AI bet for the round */
+  function aiBet(per, state, minBet, maxBet, stack, trueCount, rng) {
+    let bet;
+    if (per.betStyle === "count") {
+      const units = trueCount >= 2 ? Math.min(8, Math.floor(trueCount - 1) * 2) : 1;
+      bet = minBet * Math.max(1, units);
+    } else if (per.betStyle === "martingale") {
+      bet = state.lastLost ? Math.min(state.lastBet * 2, maxBet) : minBet * (1 + Math.floor(rng() * 3));
+    } else if (per.betStyle === "min") {
+      bet = minBet;
+    } else {
+      bet = minBet * (1 + Math.floor(rng() * 2));            // flat-ish
+    }
+    return Math.max(minBet, Math.min(maxBet, Math.min(bet, stack)));
+  }
+
+  function aiWantsInsurance(per, trueCount, rng) {
+    if (per.counter) return trueCount >= 3;
+    return rng() < per.insure;
+  }
+
+  /* ---------------- table / round state machine ----------------
+     One Table instance = one session at the table. Driven from outside:
+       startRound([{spotIdx, bet}, ...])          -> state
+       insurance(takeIt)      while state === 'insurance'
+       act('hit'|'stand'|'double'|'split')        while 'awaiting-action'
+       dealerStep()           while state === 'dealer-play'
+     Read: .state, .spots, .dealer, .currentSpot()/.currentHand(),
+           .legalMoves(), .lastResult, .log, .humanBank                  */
+
+  class Table {
+    constructor(opts) {
+      this.rng = opts.rng || Math.random;
+      this.minBet = opts.minBet || 10;
+      this.maxBet = opts.maxBet || 500;
+      this.humanName = opts.humanName || "You";
+      this.humanBank = opts.humanBank;
+      this.ais = (opts.aiPlayers || []).map(p => ({
+        name: p.name, personality: p.personality, stack: p.stack,
+        betState: { lastBet: this.minBet, lastLost: false },
+        gone: false,
+      }));
+      this.shoe = newShoe(this.rng);
+      this.runningCount = 0;
+      this.roundNo = 0;
+      this.state = "betting";
+      this.spots = [];
+      this.dealer = { cards: [], revealed: false };
+      this.curSpot = -1; this.curHand = -1;
+      this.lastResult = null;
+      this.log = [];
+      this.shuffledThisRound = false;
+    }
+
+    say(text, cls) { this.log.push({ text, cls: cls || "" }); }
+
+    liveAis() { return this.ais.filter(a => !a.gone); }
+    cardsLeft() { return this.shoe.length; }
+    decksLeft() { return Math.max(1, this.shoe.length / 52); }
+    trueCount() { return this.runningCount / this.decksLeft(); }
+
+    draw(countIt = true) {
+      const c = this.shoe.pop();
+      if (countIt) this.runningCount += hiLo(c);
+      return c;
+    }
+
+    /* ----- round setup ----- */
+    startRound(humanBets) {
+      if (this.state !== "betting" && this.state !== "settled")
+        throw new Error("round in progress");
+      if (!humanBets || humanBets.length < 1 || humanBets.length > 3)
+        throw new Error("1-3 spots required");
+      for (const b of humanBets) {
+        if (!Number.isFinite(b.bet)) throw new Error("bad bet");
+        if (b.bet < this.minBet || b.bet > this.maxBet) throw new Error("bet out of range");
+      }
+      const totalBet = humanBets.reduce((s, b) => s + b.bet, 0);
+      if (totalBet > this.humanBank) throw new Error("insufficient bankroll");
+
+      this.roundNo++;
+      this.shuffledThisRound = false;
+      if (this.shoe.length < 60) {
+        this.shoe = newShoe(this.rng);
+        this.runningCount = 0;
+        this.shuffledThisRound = true;
+        this.say("Dealer shuffles the shoe", "h");
+      }
+      this.say(`— Round #${this.roundNo} —`, "h");
+
+      // AI bets are decided off the pre-deal count (that's the Shark's edge)
+      const tc = this.trueCount();
+      const ai = this.liveAis();
+      const half = Math.ceil(ai.length / 2);
+      const mkAiSpot = a => {
+        const bet = aiBet(a.personality, a.betState, this.minBet, this.maxBet, a.stack, tc, this.rng);
+        a.stack -= bet;
+        a.betState.lastBet = bet;
+        this.say(`${a.name} bets ${bet}`);
+        return { owner: "ai", ai: a, name: a.name, spotIdx: -1, bet,
+          insured: false, insuranceBet: 0, hands: [] };
+      };
+      const mkHumanSpot = b => {
+        this.humanBank -= b.bet;
+        return { owner: "human", ai: null, name: this.humanName, spotIdx: b.spotIdx,
+          bet: b.bet, insured: false, insuranceBet: 0, hands: [] };
+      };
+      this.spots = [
+        ...ai.slice(0, half).map(mkAiSpot),
+        ...humanBets.map(mkHumanSpot),
+        ...ai.slice(half).map(mkAiSpot),
+      ];
+      this.say(`${this.humanName} bets ${humanBets.map(b => b.bet).join(" + ")}`);
+
+      // deal: one card around, dealer up, second card around, dealer hole
+      for (const s of this.spots)
+        s.hands = [{ cards: [this.draw()], bet: s.bet, doubled: false,
+          fromSplit: false, fromAces: false, done: false, isNatural: false }];
+      this.dealer = { cards: [this.draw()], revealed: false };
+      for (const s of this.spots) s.hands[0].cards.push(this.draw());
+      this.dealer.cards.push(this.draw(false));      // hole card: not counted yet
+
+      for (const s of this.spots) {
+        const h = s.hands[0];
+        if (isBlackjack(h.cards)) { h.isNatural = true; h.done = true; }
+      }
+      this.lastResult = null;
+
+      if (cardValue(this.dealer.cards[0]) === 11) {
+        // dealer shows an ace: AI decide insurance now, human decides via UI
+        for (const s of this.spots)
+          if (s.owner === "ai" && aiWantsInsurance(s.ai.personality, this.trueCount(), this.rng)) {
+            const cost = Math.floor(s.bet / 2);
+            if (s.ai.stack >= cost) {
+              s.ai.stack -= cost; s.insured = true; s.insuranceBet = cost;
+              this.say(`${s.name} takes insurance (${cost})`);
+            }
+          }
+        this.state = "insurance";
+      } else {
+        this.resolvePeek();
+      }
+      return this.state;
+    }
+
+    /* human insurance decision (covers all human spots) */
+    insurance(takeIt) {
+      if (this.state !== "insurance") throw new Error("no insurance decision pending");
+      if (takeIt) {
+        const humanSpots = this.spots.filter(s => s.owner === "human");
+        const cost = humanSpots.reduce((s, x) => s + Math.floor(x.bet / 2), 0);
+        if (cost <= this.humanBank) {
+          this.humanBank -= cost;
+          for (const s of humanSpots) {
+            s.insured = true; s.insuranceBet = Math.floor(s.bet / 2);
+          }
+          this.say(`${this.humanName} takes insurance`);
+        }
+      }
+      this.resolvePeek();
+      return this.state;
+    }
+
+    /* peek for dealer blackjack when an ace or ten-value is showing */
+    resolvePeek() {
+      const upV = cardValue(this.dealer.cards[0]);
+      if ((upV === 11 || upV === 10) && isBlackjack(this.dealer.cards)) {
+        this.revealDealer();
+        this.say("Dealer has blackjack!", "h");
+        this.settleAll();
+        return;
+      }
+      if (upV === 11) {
+        for (const s of this.spots)
+          if (s.insured) this.say(`${s.name} loses the insurance bet`);
+      }
+      this.advance(true);
+    }
+
+    revealDealer() {
+      if (!this.dealer.revealed) {
+        this.dealer.revealed = true;
+        this.runningCount += hiLo(this.dealer.cards[1]);
+        this.say(`Dealer reveals ${cardStr(this.dealer.cards[1])} — ${handText(this.dealer.cards)}`);
+      }
+    }
+
+    /* ----- player hand flow ----- */
+    handNeedsAction(h) {
+      return !h.done && !isBust(h.cards) && handValue(h.cards).total < 21;
+    }
+
+    advance(fromStart) {
+      let si = fromStart ? 0 : this.curSpot;
+      let hi = fromStart ? 0 : this.curHand + 1;
+      for (; si < this.spots.length; si++, hi = 0) {
+        const s = this.spots[si];
+        for (; hi < s.hands.length; hi++) {
+          if (this.handNeedsAction(s.hands[hi])) {
+            this.curSpot = si; this.curHand = hi;
+            this.state = "awaiting-action";
+            return;
+          }
+        }
+      }
+      this.curSpot = -1; this.curHand = -1;
+      this.state = "dealer-play";
+    }
+
+    currentSpot() { return this.state === "awaiting-action" ? this.spots[this.curSpot] : null; }
+    currentHand() { return this.state === "awaiting-action" ? this.spots[this.curSpot].hands[this.curHand] : null; }
+
+    ownerFunds(s) { return s.owner === "human" ? this.humanBank : s.ai.stack; }
+
+    legalMoves() {
+      const s = this.currentSpot(), h = this.currentHand();
+      if (!s || !h) return null;
+      const two = h.cards.length === 2;
+      const funds = this.ownerFunds(s) >= h.bet;
+      return {
+        hit: true, stand: true,
+        double: two && funds,
+        split: two && cardValue(h.cards[0]) === cardValue(h.cards[1]) &&
+          s.hands.length < 3 && funds,
+      };
+    }
+
+    act(move) {
+      if (this.state !== "awaiting-action") throw new Error("not awaiting action");
+      const s = this.spots[this.curSpot], h = s.hands[this.curHand];
+      const lm = this.legalMoves();
+      const who = s.owner === "human" && this.spots.filter(x => x.owner === "human").length > 1
+        ? `${s.name} (spot ${s.spotIdx + 1})` : s.name;
+
+      if (move === "hit") {
+        h.cards.push(this.draw());
+        const { total } = handValue(h.cards);
+        this.say(`${who} hits: ${cardStr(h.cards[h.cards.length - 1])} (${handText(h.cards)})`);
+        if (total >= 21) h.done = true;
+        if (total > 21) this.say(`${who} busts`, "h");
+      } else if (move === "stand") {
+        h.done = true;
+        this.say(`${who} stands on ${handText(h.cards)}`);
+      } else if (move === "double") {
+        if (!lm.double) throw new Error("cannot double");
+        if (s.owner === "human") this.humanBank -= h.bet; else s.ai.stack -= h.bet;
+        h.bet *= 2; h.doubled = true;
+        h.cards.push(this.draw());
+        h.done = true;
+        this.say(`${who} doubles down: ${cardStr(h.cards[2])} (${handText(h.cards)})` +
+          (isBust(h.cards) ? " — busts" : ""));
+      } else if (move === "split") {
+        if (!lm.split) throw new Error("cannot split");
+        if (s.owner === "human") this.humanBank -= h.bet; else s.ai.stack -= h.bet;
+        const aces = cardValue(h.cards[0]) === 11;
+        const h2 = { cards: [h.cards.pop()], bet: h.bet, doubled: false,
+          fromSplit: true, fromAces: aces, done: false, isNatural: false };
+        h.fromSplit = true; h.fromAces = aces;
+        h.cards.push(this.draw());
+        h2.cards.push(this.draw());
+        s.hands.splice(this.curHand + 1, 0, h2);
+        this.say(`${who} splits ${aces ? "aces" : "the pair"}`);
+        if (aces) { h.done = true; h2.done = true; }       // one card each
+        else {
+          if (handValue(h.cards).total >= 21) h.done = true;
+          if (handValue(h2.cards).total >= 21) h2.done = true;
+        }
+      } else {
+        throw new Error("unknown move " + move);
+      }
+
+      if (this.handNeedsAction(h)) return this.state;      // same hand continues
+      this.advance(false);
+      return this.state;
+    }
+
+    /* ----- dealer ----- */
+    anyLiveHands() {
+      return this.spots.some(s => s.hands.some(h => !isBust(h.cards) && !h.isNatural));
+    }
+
+    dealerShouldDraw() {
+      if (!this.anyLiveHands()) return false;
+      return handValue(this.dealer.cards).total < 17;      // S17: stand on all 17s
+    }
+
+    dealerStep() {
+      if (this.state !== "dealer-play") throw new Error("dealer not in play");
+      if (!this.dealer.revealed) {
+        this.revealDealer();
+        if (!this.dealerShouldDraw()) this.settleAll();
+        return this.state;
+      }
+      if (this.dealerShouldDraw()) {
+        this.dealer.cards.push(this.draw());
+        this.say(`Dealer draws ${cardStr(this.dealer.cards[this.dealer.cards.length - 1])} — ${handText(this.dealer.cards)}`);
+        if (this.dealerShouldDraw()) return this.state;
+      }
+      this.settleAll();
+      return this.state;
+    }
+
+    /* ----- settlement ----- */
+    settleAll() {
+      const dealerBJ = isBlackjack(this.dealer.cards);
+      const dTotal = handValue(this.dealer.cards).total;
+      const dBust = dTotal > 21;
+      if (dBust) this.say("Dealer busts!", "h");
+      let humanDelta = 0;
+      const resultSpots = [];
+
+      for (const s of this.spots) {
+        let payout = 0;
+        const handResults = [];
+        for (const h of s.hands) {
+          const pv = handValue(h.cards).total;
+          let result, pay = 0;
+          if (h.isNatural) {
+            if (dealerBJ) { result = "push"; pay = h.bet; }
+            else { result = "blackjack"; pay = h.bet + Math.floor(h.bet * 1.5); }
+          } else if (pv > 21) {
+            result = "bust";
+          } else if (dealerBJ) {
+            result = "lose";
+          } else if (dBust || pv > dTotal) {
+            result = "win"; pay = h.bet * 2;
+          } else if (pv === dTotal) {
+            result = "push"; pay = h.bet;
+          } else {
+            result = "lose";
+          }
+          payout += pay;
+          handResults.push({ cards: h.cards.slice(), bet: h.bet, result, pay });
+        }
+        let insWon = 0;
+        if (s.insured && dealerBJ) {
+          insWon = s.insuranceBet * 3;                     // stake back + 2:1
+          payout += insWon;
+          this.say(`${s.name}'s insurance pays ${s.insuranceBet * 2}`, "w");
+        }
+        const staked = s.hands.reduce((x, h) => x + h.bet, 0) + s.insuranceBet;
+        const net = payout - staked;
+        if (s.owner === "human") { this.humanBank += payout; humanDelta += net; }
+        else {
+          s.ai.stack += payout;
+          s.ai.betState.lastLost = net < 0;
+        }
+        const verdicts = handResults.map(r => r.result).join(", ");
+        this.say(`${s.name}: ${verdicts} (${net >= 0 ? "+" : ""}${net})`, net > 0 ? "w" : "");
+        resultSpots.push({ owner: s.owner, name: s.name, spotIdx: s.spotIdx,
+          hands: handResults, insured: s.insured, insuranceWon: insWon, net });
+      }
+
+      this.revealDealer();
+      for (const a of this.liveAis())
+        if (a.stack < this.minBet) {
+          a.gone = true;
+          this.say(`${a.name} is out of chips and leaves the table`, "h");
+        }
+
+      this.lastResult = {
+        spots: resultSpots,
+        dealer: { cards: this.dealer.cards.slice(), total: dTotal, blackjack: dealerBJ, bust: dBust },
+        humanDelta,
+      };
+      this.state = "settled";
+    }
+  }
+
+  /* ---------------- exports ---------------- */
+  return {
+    mulberry32, RANKS, SUIT_GLYPHS,
+    rankOf, suitOf, cardStr, cardFromStr, cardsFromStr,
+    cardValue, hiLo, handValue, isBust, isBlackjack, handText,
+    DECKS, SHOE_SIZE, newShoe,
+    basicStrategy, PERSONALITIES, AI_NAMES, aiDecide, aiBet, aiWantsInsurance,
+    Table,
+  };
+})();
+if (typeof module !== "undefined" && module.exports) module.exports = BlackjackEngine;
+</script>
+
+<script id="ui">
+/* ============================================================
+   UI — rendering, pacing, betting panel, persistence.
+   Talks to BlackjackEngine only through its public API.
+   ============================================================ */
+"use strict";
+(() => {
+  const E = BlackjackEngine;
+
+  /* ---------------- config ---------------- */
+  const MIN_BET = 10;
+  const MAX_BET = 500;
+  const START_BANKROLL = 10000;
+  const AI_STACK = 2000;
+  const SAVE_KEY = "blackjack-night-save-v1";
+  const SPEEDS = { relaxed: 1.5, normal: 1.0, fast: 0.45 };
+
+  /* ---------------- persistence ---------------- */
+  const defaultSave = () => ({
+    bankroll: START_BANKROLL,
+    settings: { name: "You", opponents: 3, speed: "normal" },
+    stats: { rounds: 0, handsWon: 0, blackjacks: 0, biggestWin: 0 },
+  });
+  let save = defaultSave();
+  try {
+    const raw = localStorage.getItem(SAVE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      save = { ...defaultSave(), ...parsed,
+        settings: { ...defaultSave().settings, ...(parsed.settings || {}) },
+        stats: { ...defaultSave().stats, ...(parsed.stats || {}) } };
+    }
+  } catch (e) { /* corrupted or unavailable storage: start fresh */ }
+  function persist() {
+    try { localStorage.setItem(SAVE_KEY, JSON.stringify(save)); } catch (e) { /* storage off */ }
+  }
+
+  /* ---------------- dom ---------------- */
+  const $ = id => document.getElementById(id);
+  const dealerCardsEl = $("dealerCards"), dealerTotalEl = $("dealerTotal"),
+    aiSeatsEl = $("aiseats"), spotsEl = $("spots"), bannerEl = $("banner"),
+    shoeInfoEl = $("shoeInfo"), logBodyEl = $("logbody"),
+    betPanelEl = $("betPanel"), playPanelEl = $("playPanel"), insPanelEl = $("insPanel"),
+    waitMsgEl = $("waitmsg"),
+    btnHit = $("btnHit"), btnStand = $("btnStand"), btnDouble = $("btnDouble"), btnSplit = $("btnSplit");
+
+  /* ---------------- session state ---------------- */
+  let table = null;             // BlackjackEngine.Table
+  let aiSeatEls = [];           // seat DOM per AI (by table.ais index)
+  let spotEls = [];             // 3 human spot DOM slots
+  let seq = 0;
+  let logDrained = 0;
+  let leaveRequested = false;
+  let betAmounts = [0, 0, 0];   // betting panel state
+  let lastBets = null;          // for rebet
+
+  const speedMult = () => SPEEDS[save.settings.speed] || 1;
+  const wait = ms => new Promise(res => {
+    const my = seq;
+    setTimeout(() => { if (my === seq) res(); else res("stale"); }, ms * speedMult());
+  });
+  const fmt = n => n.toLocaleString("en-US");
+
+  let bannerTimer = null;
+  function banner(text, holdMs) {
+    if (bannerTimer) { clearTimeout(bannerTimer); bannerTimer = null; }
+    bannerEl.textContent = text;
+    bannerEl.classList.add("show");
+    if (holdMs) {
+      const my = seq;
+      bannerTimer = setTimeout(() => { if (my === seq) bannerEl.classList.remove("show"); }, holdMs * speedMult());
+    }
+  }
+  function drainLog() {
+    if (!table) return;
+    while (logDrained < table.log.length) {
+      const e = table.log[logDrained++];
+      const d = document.createElement("div");
+      if (e.cls) d.className = e.cls;
+      d.textContent = e.text;
+      logBodyEl.appendChild(d);
+    }
+    logBodyEl.scrollTop = logBodyEl.scrollHeight;
+  }
+
+  function cardEl(card, opts = {}) {
+    const d = document.createElement("div");
+    d.className = "card" + (opts.small ? " small" : "") + (opts.deal ? " deal" : "");
+    if (opts.back || card == null) { d.classList.add("back"); return d; }
+    const suit = E.suitOf(card);
+    d.classList.add(suit === 1 || suit === 2 ? "red" : "black");
+    const r = document.createElement("div"); r.className = "r";
+    r.textContent = E.RANKS[card % 13] === "T" ? "10" : E.RANKS[card % 13];
+    const s = document.createElement("div"); s.className = "s";
+    s.textContent = E.SUIT_GLYPHS[suit];
+    d.append(r, s);
+    return d;
+  }
+
+  /* ---------------- layout ---------------- */
+  const AI_POS = {   // [x%, y%] inside #table, first-base side (viewer right) first
+    right: [[81, 36], [88, 62]],
+    left: [[19, 36], [12, 62]],
+  };
+  function buildSeats() {
+    aiSeatsEl.innerHTML = "";
+    aiSeatEls = [];
+    const n = table.ais.length;
+    const half = Math.ceil(n / 2);
+    for (let i = 0; i < n; i++) {
+      const a = table.ais[i];
+      const side = i < half ? AI_POS.right[i] : AI_POS.left[i - half];
+      const seat = document.createElement("div");
+      seat.className = "seat";
+      seat.style.left = side[0] + "%";
+      seat.style.top = side[1] + "%";
+      seat.innerHTML = `
+        <div class="hands"></div>
+        <div class="plate">
+          <div class="avatar">${a.personality.emoji}</div>
+          <div class="nm">${a.name} · ${a.personality.label}</div>
+          <div class="stk"></div>
+          <div class="status"></div>
+        </div>`;
+      aiSeatsEl.appendChild(seat);
+      aiSeatEls.push(seat);
+    }
+    // human spot slots (3, shown/hidden per round)
+    spotsEl.innerHTML = "";
+    spotEls = [];
+    for (let i = 0; i < 3; i++) {
+      const el = document.createElement("div");
+      el.className = "spot";
+      el.innerHTML = `
+        <div class="hands"></div>
+        <div class="ring" data-spot="${i}">Spot ${i + 1}</div>
+        <div class="betline"><span class="bet-pill"></span></div>`;
+      el.querySelector(".ring").addEventListener("click", () => {
+        if (!table || table.state === "settled" || table.state === "betting") toggleSpot(i);
+      });
+      spotsEl.appendChild(el);
+      spotEls.push(el);
+    }
+  }
+
+  function handBox(hand, opts = {}) {
+    const box = document.createElement("div");
+    box.className = "handbox" + (opts.active ? " active" : "");
+    const cards = document.createElement("div");
+    cards.className = "cards";
+    for (const c of hand.cards) cards.appendChild(cardEl(c, { small: opts.small, deal: opts.deal }));
+    const hv = document.createElement("div");
+    hv.className = "hv";
+    hv.textContent = E.handText(hand.cards);
+    if (opts.badge) {
+      const b = document.createElement("div");
+      const cls = opts.badge === "blackjack" ? "bj" : opts.badge === "bust" ? "lose" : opts.badge;
+      b.className = "badge " + cls;
+      b.textContent = opts.badge === "blackjack" ? "BLACKJACK" :
+        opts.badge === "bust" ? "BUST" : opts.badge.toUpperCase();
+      box.appendChild(b);
+    }
+    box.append(cards, hv);
+    return box;
+  }
+
+  /* ---------------- rendering ---------------- */
+  function resultFor(spot, handIdx) {
+    if (!table.lastResult) return null;
+    const rs = table.lastResult.spots.find(x =>
+      x.owner === spot.owner && x.name === spot.name && x.spotIdx === spot.spotIdx);
+    return rs && rs.hands[handIdx] ? rs.hands[handIdx].result : null;
+  }
+
+  function render(opts = {}) {
+    if (!table) return;
+    const settledNow = table.state === "settled";
+    // dealer
+    dealerCardsEl.innerHTML = "";
+    if (table.dealer.cards.length) {
+      dealerCardsEl.appendChild(cardEl(table.dealer.cards[0], { deal: opts.deal }));
+      dealerCardsEl.appendChild(
+        table.dealer.revealed
+          ? cardEl(table.dealer.cards[1], { deal: opts.deal })
+          : cardEl(null, { back: true, deal: opts.deal }));
+      for (let i = 2; i < table.dealer.cards.length; i++)
+        dealerCardsEl.appendChild(cardEl(table.dealer.cards[i], { deal: true }));
+      dealerTotalEl.textContent = table.dealer.revealed
+        ? E.handText(table.dealer.cards)
+        : `showing ${E.cardValue(table.dealer.cards[0])}`;
+    } else dealerTotalEl.textContent = "";
+
+    // AI seats
+    const cur = table.state === "awaiting-action" ? table.currentSpot() : null;
+    for (let i = 0; i < table.ais.length; i++) {
+      const a = table.ais[i], seat = aiSeatEls[i];
+      seat.classList.toggle("gone", a.gone);
+      seat.querySelector(".stk").textContent = a.gone ? "—" : fmt(a.stack);
+      const spot = table.spots.find(s => s.owner === "ai" && s.ai === a);
+      seat.classList.toggle("acting", !!(cur && cur.ai === a));
+      const handsEl = seat.querySelector(".hands");
+      handsEl.innerHTML = "";
+      const st = seat.querySelector(".status");
+      st.textContent = "";
+      if (spot && spot.hands.length) {
+        spot.hands.forEach((h, hi) => {
+          handsEl.appendChild(handBox(h, {
+            small: true, deal: opts.deal,
+            active: cur === spot && table.curHand === hi,
+            badge: settledNow ? resultFor(spot, hi) : null,
+          }));
+        });
+        st.textContent = `bet ${fmt(spot.bet)}${spot.insured ? " +ins" : ""}`;
+      } else if (a.gone) st.textContent = "left the table";
+    }
+
+    // human spots
+    for (let i = 0; i < 3; i++) {
+      const el = spotEls[i];
+      const spot = table.spots.find(s => s.owner === "human" && s.spotIdx === i);
+      const ring = el.querySelector(".ring");
+      const pill = el.querySelector(".bet-pill");
+      const handsEl = el.querySelector(".hands");
+      handsEl.innerHTML = "";
+      if (spot && spot.hands.length) {
+        ring.style.display = "none";
+        spot.hands.forEach((h, hi) => {
+          handsEl.appendChild(handBox(h, {
+            deal: opts.deal,
+            active: cur === spot && table.curHand === hi,
+            badge: settledNow ? resultFor(spot, hi) : null,
+          }));
+        });
+        pill.textContent = fmt(spot.hands.reduce((s, h) => s + h.bet, 0)) +
+          (spot.insured ? " +ins" : "");
+      } else {
+        ring.style.display = "flex";
+        ring.classList.toggle("on", betAmounts[i] > 0);
+        pill.textContent = betAmounts[i] > 0 ? fmt(betAmounts[i]) : "";
+      }
+    }
+
+    // shoe + topbar
+    shoeInfoEl.innerHTML =
+      `${table.cardsLeft()} cards in shoe` +
+      (table.shuffledThisRound ? "<br>freshly shuffled" : "");
+    $("tbRound").textContent = table.roundNo || "–";
+    $("tbBank").textContent = fmt(table.humanBank);
+    drainLog();
+  }
+
+  /* ---------------- bottom panels ---------------- */
+  function showPanel(which, msg) {
+    betPanelEl.style.display = which === "bet" ? "flex" : "none";
+    playPanelEl.style.display = which === "play" ? "flex" : "none";
+    insPanelEl.style.display = which === "ins" ? "flex" : "none";
+    waitMsgEl.style.display = which === "wait" ? "block" : "none";
+    if (msg != null) waitMsgEl.textContent = msg;
+  }
+
+  function buildBetPanel() {
+    betPanelEl.innerHTML = "";
+    for (let i = 0; i < 3; i++) {
+      const d = document.createElement("div");
+      d.className = "betspot";
+      d.innerHTML = `
+        <div class="label">Spot ${i + 1}</div>
+        <div class="amount" id="betAmt${i}">–</div>
+        <div class="chips">
+          <button class="chipbtn c10" data-i="${i}" data-v="10">10</button>
+          <button class="chipbtn c50" data-i="${i}" data-v="50">50</button>
+          <button class="chipbtn c100" data-i="${i}" data-v="100">100</button>
+          <button class="chipbtn c500" data-i="${i}" data-v="500">500</button>
+          <button class="chipbtn clear" data-i="${i}" data-v="0">✕</button>
+        </div>`;
+      betPanelEl.appendChild(d);
+    }
+    const side = document.createElement("div");
+    side.id = "betSide";
+    side.innerHTML = `
+      <button class="bigact deal" id="btnDeal">Deal</button>
+      <button class="bigact rebet" id="btnRebet">Rebet &amp; deal</button>`;
+    betPanelEl.appendChild(side);
+    $("btnDeal").addEventListener("click", () => deal());
+    $("btnRebet").addEventListener("click", () => {
+      if (!lastBets) return;
+      betAmounts = [0, 0, 0];
+      for (const b of lastBets) betAmounts[b.spotIdx] = b.bet;
+      refreshBetPanel();
+      deal();
+    });
+  }
+
+  // one delegated listener for the chip buttons (panel innerHTML is rebuilt per session)
+  betPanelEl.addEventListener("click", e => {
+    const b = e.target.closest(".chipbtn");
+    if (!b || !table) return;
+    if (table.state !== "betting" && table.state !== "settled") return;
+    const i = Number(b.dataset.i), v = Number(b.dataset.v);
+    if (v === 0) betAmounts[i] = 0;
+    else betAmounts[i] = Math.min(MAX_BET, betAmounts[i] + v);
+    refreshBetPanel();
+  });
+
+  function currentBets() {
+    const bets = [];
+    for (let i = 0; i < 3; i++)
+      if (betAmounts[i] >= MIN_BET) bets.push({ spotIdx: i, bet: betAmounts[i] });
+    return bets;
+  }
+
+  function refreshBetPanel() {
+    if (!table) return;
+    for (let i = 0; i < 3; i++) {
+      $("betAmt" + i).textContent = betAmounts[i] > 0 ? fmt(betAmounts[i]) : "–";
+      betPanelEl.children[i].classList.toggle("inactive", betAmounts[i] === 0);
+    }
+    const bets = currentBets();
+    const total = bets.reduce((s, b) => s + b.bet, 0);
+    const ok = bets.length >= 1 && total <= table.humanBank &&
+      betAmounts.every(a => a === 0 || a >= MIN_BET);
+    $("btnDeal").disabled = !ok;
+    const rebetOk = lastBets && lastBets.reduce((s, b) => s + b.bet, 0) <= table.humanBank;
+    $("btnRebet").disabled = !rebetOk;
+    render();
+  }
+
+  function toggleSpot(i) {
+    if (i === 0) return;                      // spot 1 stays available
+    betAmounts[i] = betAmounts[i] > 0 ? 0 : Math.max(MIN_BET, betAmounts[0] || MIN_BET);
+    refreshBetPanel();
+  }
+
+  /* ---------------- game flow ---------------- */
+  function deal() {
+    const bets = currentBets();
+    if (!bets.length) return;
+    lastBets = bets.map(b => ({ ...b }));
+    try { table.startRound(bets); } catch (err) { banner(err.message, 2000); return; }
+    showPanel("wait", "Dealing…");
+    render({ deal: true });
+    pump();
+  }
+
+  async function pump() {
+    if (!table) return;
+    const my = seq;
+    while (my === seq) {
+      render();
+      if (table.state === "insurance") {
+        const humanSpots = table.spots.filter(s => s.owner === "human");
+        const cost = humanSpots.reduce((s, x) => s + Math.floor(x.bet / 2), 0);
+        $("btnInsYes").disabled = cost > table.humanBank;
+        showPanel("ins");
+        return;                                   // resumes via insurance buttons
+      }
+      if (table.state === "awaiting-action") {
+        const s = table.currentSpot();
+        if (s.owner === "human") {
+          const lm = table.legalMoves();
+          btnDouble.disabled = !lm.double;
+          btnSplit.disabled = !lm.split;
+          showPanel("play");
+          return;                                 // resumes via action buttons
+        }
+        showPanel("wait", `${s.name} is playing…`);
+        if (await wait(650 + Math.random() * 500) === "stale") return;
+        const h = table.currentHand();
+        const lm = table.legalMoves();
+        const move = E.aiDecide(s.ai.personality, h.cards, table.dealer.cards[0],
+          { canDouble: lm.double, canSplit: lm.split }, table.rng, table.trueCount());
+        table.act(move);
+        continue;
+      }
+      if (table.state === "dealer-play") {
+        showPanel("wait", "Dealer plays…");
+        if (await wait(700) === "stale") return;
+        table.dealerStep();
+        continue;
+      }
+      if (table.state === "settled") { await settled(my); return; }
+      return;                                     // 'betting'
+    }
+  }
+
+  async function settled(my) {
+    const res = table.lastResult;
+    render();
+    // stats + save snapshot
+    save.stats.rounds++;
+    for (const s of res.spots)
+      if (s.owner === "human")
+        for (const h of s.hands) {
+          if (h.result === "win" || h.result === "blackjack") save.stats.handsWon++;
+          if (h.result === "blackjack") save.stats.blackjacks++;
+        }
+    if (res.humanDelta > 0)
+      save.stats.biggestWin = Math.max(save.stats.biggestWin, res.humanDelta);
+    save.bankroll = table.humanBank;
+    persist();
+
+    const d = res.humanDelta;
+    banner(d > 0 ? `You win ${fmt(d)}!` : d < 0 ? `Down ${fmt(-d)} this round` : "Break even", 2600);
+    showPanel("wait", "");
+    if (await wait(2800) === "stale") return;
+
+    if (leaveRequested) { endSession(); showSetup(); return; }
+    if (table.humanBank < MIN_BET) {
+      banner("You're out of money!", 3000);
+      if (await wait(2200) === "stale") return;
+      endSession(); showSetup();
+      return;
+    }
+    // back to betting
+    for (let i = 0; i < 3; i++)
+      if (betAmounts[i] > table.humanBank) betAmounts[i] = 0;
+    showPanel("bet");
+    refreshBetPanel();
+  }
+
+  /* action buttons */
+  function humanMove(move) {
+    if (!table || table.state !== "awaiting-action") return;
+    if (table.currentSpot().owner !== "human") return;
+    const lm = table.legalMoves();
+    if ((move === "double" && !lm.double) || (move === "split" && !lm.split)) return;
+    showPanel("wait", "");
+    table.act(move);
+    render();
+    pump();
+  }
+  btnHit.addEventListener("click", () => humanMove("hit"));
+  btnStand.addEventListener("click", () => humanMove("stand"));
+  btnDouble.addEventListener("click", () => humanMove("double"));
+  btnSplit.addEventListener("click", () => humanMove("split"));
+  $("btnInsYes").addEventListener("click", () => {
+    if (!table || table.state !== "insurance") return;
+    showPanel("wait", ""); table.insurance(true); render(); pump();
+  });
+  $("btnInsNo").addEventListener("click", () => {
+    if (!table || table.state !== "insurance") return;
+    showPanel("wait", ""); table.insurance(false); render(); pump();
+  });
+
+  /* ---------------- session ---------------- */
+  function startSession(name, oppCount) {
+    seq++;
+    logDrained = 0;
+    logBodyEl.innerHTML = "";
+    leaveRequested = false;
+    betAmounts = [MIN_BET * 2, 0, 0];
+    lastBets = null;
+
+    const rng = E.mulberry32((Date.now() ^ (Math.random() * 0xFFFFFFFF)) >>> 0);
+    const names = [...E.AI_NAMES].sort(() => rng() - 0.5).slice(0, oppCount);
+    const pers = [...E.PERSONALITIES].sort(() => rng() - 0.5);
+    table = new E.Table({
+      humanName: name, humanBank: save.bankroll,
+      aiPlayers: names.map((n, i) => ({ name: n, personality: pers[i % pers.length], stack: AI_STACK })),
+      rng, minBet: MIN_BET, maxBet: MAX_BET,
+    });
+    buildSeats();
+    banner("Place your bets!", 1800);
+    showPanel("bet");
+    buildBetPanel();
+    refreshBetPanel();
+    render();
+  }
+
+  function endSession() {
+    if (!table) return;
+    save.bankroll = table.humanBank;
+    persist();
+    seq++;
+    table = null;
+    leaveRequested = false;
+    $("btnLeave").textContent = "Leave table";
+    aiSeatsEl.innerHTML = ""; spotsEl.innerHTML = "";
+    dealerCardsEl.innerHTML = ""; dealerTotalEl.textContent = "";
+    shoeInfoEl.innerHTML = "";
+    bannerEl.classList.remove("show");
+    showPanel("wait", "Welcome to the table.");
+  }
+
+  /* ---------------- overlays ---------------- */
+  let chosenOpps = save.settings.opponents;
+  function showSetup() {
+    const row = $("setupOpps");
+    row.innerHTML = "";
+    for (let i = 0; i <= 4; i++) {
+      const b = document.createElement("button");
+      b.className = "oppbtn" + (i === chosenOpps ? " sel" : "");
+      b.textContent = i;
+      b.addEventListener("click", () => {
+        chosenOpps = i;
+        row.querySelectorAll(".oppbtn").forEach(x => x.classList.remove("sel"));
+        b.classList.add("sel");
+      });
+      row.appendChild(b);
+    }
+    $("setupName").value = save.settings.name;
+    $("setupBank").textContent = fmt(save.bankroll);
+    const broke = save.bankroll < MIN_BET;
+    $("setupGo").disabled = broke;
+    $("setupBroke").style.display = broke ? "block" : "none";
+    $("tbBank").textContent = fmt(save.bankroll);
+    $("tbRound").textContent = "–";
+    $("setupOverlay").classList.remove("hidden");
+  }
+  $("setupGo").addEventListener("click", () => {
+    const name = $("setupName").value.trim().slice(0, 14) || "You";
+    save.settings.name = name;
+    save.settings.opponents = chosenOpps;
+    persist();
+    $("setupOverlay").classList.add("hidden");
+    startSession(name, chosenOpps);
+  });
+  $("setupReset").addEventListener("click", () => resetEverything());
+
+  function resetEverything() {
+    if (!confirm("Reset bankroll and stats? This cannot be undone.")) return;
+    const keep = save.settings;
+    save = defaultSave();
+    save.settings = keep;
+    persist();
+    seq++;
+    table = null;
+    location.reload();
+  }
+
+  $("btnSettings").addEventListener("click", () => {
+    const s = save.stats;
+    $("statGrid").innerHTML =
+      `<span>Rounds played</span><b>${fmt(s.rounds)}</b>` +
+      `<span>Hands won</span><b>${fmt(s.handsWon)}</b>` +
+      `<span>Blackjacks</span><b>${fmt(s.blackjacks)}</b>` +
+      `<span>Biggest round win</span><b>${fmt(s.biggestWin)}</b>`;
+    document.querySelectorAll("#speedRow .oppbtn").forEach(b =>
+      b.classList.toggle("sel", b.dataset.s === save.settings.speed));
+    $("settingsOverlay").classList.remove("hidden");
+  });
+  $("speedRow").addEventListener("click", e => {
+    const s = e.target.dataset && e.target.dataset.s;
+    if (!s) return;
+    save.settings.speed = s; persist();
+    document.querySelectorAll("#speedRow .oppbtn").forEach(b =>
+      b.classList.toggle("sel", b.dataset.s === s));
+  });
+  $("settingsClose").addEventListener("click", () => $("settingsOverlay").classList.add("hidden"));
+  $("settingsResetBank").addEventListener("click", () => resetEverything());
+
+  $("btnLog").addEventListener("click", () => $("logdrawer").classList.toggle("open"));
+  $("btnLeave").addEventListener("click", () => {
+    if (!table) { showSetup(); return; }
+    if (table.state === "betting" || table.state === "settled") {
+      endSession(); showSetup(); return;
+    }
+    leaveRequested = !leaveRequested;
+    banner(leaveRequested ? "Leaving after this round…" : "Staying after all!", 1600);
+    $("btnLeave").textContent = leaveRequested ? "Stay" : "Leave table";
+  });
+
+  /* ---------------- boot ---------------- */
+  showPanel("wait", "Welcome to the table.");
+  showSetup();
+})();
+</script>
+</body>
+</html>
