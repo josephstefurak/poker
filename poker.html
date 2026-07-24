@@ -1357,11 +1357,10 @@ if (typeof module !== "undefined" && module.exports) module.exports = PokerEngin
     }
   }
   let raiseTarget = 0;   // single source of truth for the amount btnRaise submits
-  function syncRaise(v, snap) {
+  function syncRaise(v) {
     const la = game.legalActions();
     if (!la || !la.canRaise) return;
     v = Math.round(Number(v) || la.minRaiseTo);
-    if (snap) v = Math.round(v / SMALL_BLIND) * SMALL_BLIND;  // drag moves in blind-size steps
     v = Math.max(la.minRaiseTo, Math.min(la.maxRaiseTo, v));
     raiseTarget = v;
     slider.value = v; raiseAmt.value = v;
@@ -1369,7 +1368,18 @@ if (typeof module !== "undefined" && module.exports) module.exports = PokerEngin
     btnRaise.textContent = v >= la.maxRaiseTo ? `All-in ${fmt(v)}` :
       open ? `Bet ${fmt(v)}` : `Raise to ${fmt(v)}`;
   }
-  slider.addEventListener("input", () => syncRaise(slider.value, true));
+  slider.addEventListener("input", () => {
+    const la = game && game.legalActions();
+    if (!la || !la.canRaise) return;
+    const raw = Number(slider.value);
+    let v;
+    if (raw >= la.maxRaiseTo) v = la.maxRaiseTo;                 // ends always reachable,
+    else if (raw <= la.minRaiseTo) v = la.minRaiseTo;            // whatever the alignment
+    else if (Math.abs(raw - raiseTarget) <= 2)                   // arrow key: one blind per press
+      v = raiseTarget + Math.sign(raw - raiseTarget) * SMALL_BLIND;
+    else v = Math.round(raw / SMALL_BLIND) * SMALL_BLIND;        // drag: blind-size steps
+    syncRaise(v);
+  });
   raiseAmt.addEventListener("change", () => syncRaise(raiseAmt.value));
   $("raiserow").addEventListener("click", e => {
     const p = e.target.dataset && e.target.dataset.p;
